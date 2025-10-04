@@ -23,14 +23,15 @@ namespace noisy
 
         public static void Shader1_2()
         {
-            // Escolhas aleatórias por execução
+            // Escolhas aleatórias por execução (ajustadas para serem pequenas e realistas
+            // em relação aos valores hardcoded originais)
             var startRnd = new Random(unchecked(Environment.TickCount ^ Thread.CurrentThread.ManagedThreadId));
 
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // scale aleatório entre 1 e 8 (maior = mais rápido, menor qualidade)
-            int scale = 1;//startRnd.Next(1, 9);
+            // scale aleatório pequeno (1 ou 2). O código original usava 1 por padrão.
+            int scale = startRnd.Next(1, 3); // 1..2
 
             int w = Math.Max(1, screenW / scale);
             int h = Math.Max(1, screenH / scale);
@@ -38,20 +39,30 @@ namespace noisy
             int sizeSmall = w * h;
             int bytesSmall = sizeSmall * 3;
 
-            // Escolhe offsets/margens aleatórios para o StretchBlt de destino (fixos por execução)
-            int destX = startRnd.Next(0, Math.Min(10, screenW / 10)); // deslocamento à esquerda
-            int destY = startRnd.Next(0, Math.Min(10, screenH / 10)); // deslocamento ao topo
-            int maxShrinkW = Math.Min(screenW / 4, Math.Max(10, screenW / 10));
-            int maxShrinkH = Math.Min(screenH / 4, Math.Max(10, screenH / 10));
-            int shrinkW = startRnd.Next(0, maxShrinkW);
-            int shrinkH = startRnd.Next(0, maxShrinkH);
+            // Escolhe offsets/margens aleatórios pequenos para o StretchBlt de destino
+            // Valores próximos ao original (ex: deslocamentos de poucos pixels e pequenas
+            // reduções de largura/altura como -10 / -20).
+            int destX = startRnd.Next(0, Math.Min(6, screenW / 10)); // 0..5
+            int destY = startRnd.Next(0, Math.Min(6, screenH / 10)); // 0..5
+
+            // Pequenas reduções fixas na largura/altura para simular os -10 / -20 originais
+            int shrinkW = startRnd.Next(4, 12);  // 4..11 (aprox equivalente ao -10 original)
+            int shrinkH = startRnd.Next(10, 26); // 10..25 (aprox equivalente ao -20 original)
+
             int destW = Math.Max(1, screenW - shrinkW - destX);
             int destH = Math.Max(1, screenH - shrinkH - destY);
 
-            // Amplitudes de ruído por canal (valores pequenos para evitar overflow agressivo)
-            int rRangeLow = -startRnd.Next(1, 5), rRangeHigh = startRnd.Next(1, 6);
-            int gRangeLow = -startRnd.Next(1, 5), gRangeHigh = startRnd.Next(1, 6);
-            int bRangeLow = -startRnd.Next(1, 5), bRangeHigh = startRnd.Next(1, 6);
+            // Amplitudes de ruído por canal próximas aos valores originais:
+            // original: B: rnd.Next(-3,5)  G: rnd.Next(-4,4)  R: rnd.Next(-5,3)
+            // aqui escolhemos pequenas variações por execução, mantendo a mesma ordem de magnitude
+            int bRangeLow = -startRnd.Next(1, 4);   // -1 .. -3
+            int bRangeHigh = startRnd.Next(3, 6);   // 3  .. 5
+
+            int gRangeLow = -startRnd.Next(2, 5);   // -2 .. -4
+            int gRangeHigh = startRnd.Next(2, 4);   // 2  .. 3
+
+            int rRangeLow = -startRnd.Next(3, 6);   // -3 .. -5
+            int rRangeHigh = startRnd.Next(1, 4);   // 1  .. 3
 
             // Parallel options
             var pOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
@@ -127,7 +138,8 @@ namespace noisy
                     // Copy back to the small DIB
                     Marshal.Copy(rgbArray, 0, ppvBits, bytesSmall);
 
-                    // Stretch the small DIB to full screen quickly usando valores aleatórios por execução
+                    // Stretch the small DIB to full screen rapidamente usando valores aleatórios por execução,
+                    // mas próximos aos offsets/margens originais
                     StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
                     // Sem sleep: tempo-real o mais rápido possível
