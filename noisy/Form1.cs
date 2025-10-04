@@ -23,21 +23,40 @@ namespace noisy
 
         public static void Shader1_2()
         {
+            // Escolhas aleatórias por execução
+            var startRnd = new Random(unchecked(Environment.TickCount ^ Thread.CurrentThread.ManagedThreadId));
+
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // Aggressive downscale for speed. Bigger = faster, lower quality.
-            const int scale = 1; // try 4/6/8. 6 gives large speedup.
+            // scale aleatório entre 1 e 8 (maior = mais rápido, menor qualidade)
+            int scale = 1;//startRnd.Next(1, 9);
+
             int w = Math.Max(1, screenW / scale);
             int h = Math.Max(1, screenH / scale);
 
             int sizeSmall = w * h;
             int bytesSmall = sizeSmall * 3;
 
+            // Escolhe offsets/margens aleatórios para o StretchBlt de destino (fixos por execução)
+            int destX = startRnd.Next(0, Math.Min(10, screenW / 10)); // deslocamento à esquerda
+            int destY = startRnd.Next(0, Math.Min(10, screenH / 10)); // deslocamento ao topo
+            int maxShrinkW = Math.Min(screenW / 4, Math.Max(10, screenW / 10));
+            int maxShrinkH = Math.Min(screenH / 4, Math.Max(10, screenH / 10));
+            int shrinkW = startRnd.Next(0, maxShrinkW);
+            int shrinkH = startRnd.Next(0, maxShrinkH);
+            int destW = Math.Max(1, screenW - shrinkW - destX);
+            int destH = Math.Max(1, screenH - shrinkH - destY);
+
+            // Amplitudes de ruído por canal (valores pequenos para evitar overflow agressivo)
+            int rRangeLow = -startRnd.Next(1, 5), rRangeHigh = startRnd.Next(1, 6);
+            int gRangeLow = -startRnd.Next(1, 5), gRangeHigh = startRnd.Next(1, 6);
+            int bRangeLow = -startRnd.Next(1, 5), bRangeHigh = startRnd.Next(1, 6);
+
             // Parallel options
             var pOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
 
-            // Thread-local random for safe parallel randoms
+            // Thread-local random para segurança em paralelo
             var threadRand = new ThreadLocal<Random>(() => new Random(unchecked(Environment.TickCount * 31 + Thread.CurrentThread.ManagedThreadId)));
 
             IntPtr hdc = IntPtr.Zero;
@@ -90,29 +109,28 @@ namespace noisy
                     // Copy small DIB into managed array
                     Marshal.Copy(ppvBits, rgbArray, 0, bytesSmall);
 
-                    // Parallel noise modification — process by rows to improve locality
+                    // Parallel noise modification — process por linhas para melhor localidade
                     Parallel.For(0, h, pOptions, y =>
                     {
                         var rnd = threadRand.Value;
                         int rowStart = y * w * 3;
-                        // Very low-quality: modify every pixel but minimal math to be fast
                         for (int xPos = 0; xPos < w; xPos++)
                         {
                             int idx = rowStart + xPos * 3;
-                            // quick random-ish changes; clamp naturally by byte overflow (wrap is acceptable)
-                            rgbArray[idx + 0] += (byte)rnd.Next(-3, 5);
-                            rgbArray[idx + 1] += (byte)rnd.Next(-4, 4);
-                            rgbArray[idx + 2] += (byte)rnd.Next(-5, 3);
+                            // aplicar ruído com amplitudes escolhidas no início
+                            rgbArray[idx + 0] = (byte)(rgbArray[idx + 0] + rnd.Next(bRangeLow, bRangeHigh)); // B
+                            rgbArray[idx + 1] = (byte)(rgbArray[idx + 1] + rnd.Next(gRangeLow, gRangeHigh)); // G
+                            rgbArray[idx + 2] = (byte)(rgbArray[idx + 2] + rnd.Next(rRangeLow, rRangeHigh)); // R
                         }
                     });
 
                     // Copy back to the small DIB
                     Marshal.Copy(rgbArray, 0, ppvBits, bytesSmall);
 
-                    // Stretch the small DIB to full screen quickly
-                    StretchBlt(hdc, 4, 4, screenW-10, screenH-20, mdc, 0, 0, w, h, SRCCOPY);
+                    // Stretch the small DIB to full screen quickly usando valores aleatórios por execução
+                    StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
-                    // No sleep: real-time as fast as possible. This will use a lot of CPU/GPU.
+                    // Sem sleep: tempo-real o mais rápido possível
                 }
             }
             finally
