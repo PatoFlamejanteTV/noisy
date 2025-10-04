@@ -8,6 +8,8 @@ Quit the app using `Ctrl + Alt + Q`.
 
 ## Downloading
 
+The 64-Bit version runs **much** faster than the 32-Bit one.
+
 `64-Bit version:` https://github.com/PatoFlamejanteTV/noisy/releases/download/v1.0.0/noisy64.exe
 
 `32-Bit version:` https://github.com/PatoFlamejanteTV/noisy/releases/download/v1.0.0/noisy32.exe
