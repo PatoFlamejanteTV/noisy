@@ -16,12 +16,46 @@ namespace noisy
 {
     public partial class Form1 : Form
     {
+        // --- Novos membros para hotkey global / cancelamento ---
+        private CancellationTokenSource _cts;
+        private IntPtr _hookID = IntPtr.Zero;
+        private LowLevelKeyboardProc _proc;
+
+        // Hotkey configurável aqui: Ctrl + Alt + Q
+        // Altere vkTrigger para outra tecla (usando System.Windows.Forms.Keys) se desejar.
+        private const int VK_CONTROL = 0x11;
+        private const int VK_MENU = 0x12; // Alt
+        private const int VK_SHIFT = 0x10;
+        private const int VK_Q = (int)Keys.Q;
+
+        private const int WH_KEYBOARD_LL = 13;
+        private const int WM_KEYDOWN = 0x0100;
+
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+        // -------------------------------------------------------
+
         public Form1()
         {
             InitializeComponent();
         }
 
-        public static void Shader1_2()
+        public static void Shader1_2(CancellationToken token)
         {
             // Escolhas aleatórias por execução (ajustadas para serem pequenas e realistas
             // em relação aos valores hardcoded originais)
@@ -113,6 +147,8 @@ namespace noisy
                 // Main loop: capture small, noisy in parallel, stretch to full screen
                 while (true)
                 {
+                    if (token.IsCancellationRequested) break;
+
                     // Capture scaled-down screen into the small DIB by stretching the desktop into mdc
                     // StretchBlt from hdc (screen) to mdc (small DIB)
                     StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
@@ -165,8 +201,103 @@ namespace noisy
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            // Cria token de cancelamento para encerrar o shader de forma limpa
+            _cts = new CancellationTokenSource();
+
             // Start the shader on a dedicated background thread (long-running) to avoid threadpool starvation
-            Task.Factory.StartNew(() => Shader1_2(), TaskCreationOptions.LongRunning);
+            Task.Factory.StartNew(() => Shader1_2(_cts.Token), TaskCreationOptions.LongRunning);
+
+            // Instala hook global de teclado
+            _proc = HookCallback;
+            _hookID = SetHook(_proc);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            // Cancelar shader e remover hook
+            try
+            {
+                _cts?.Cancel();
+            }
+            catch { }
+
+            if (_hookID != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookID);
+                _hookID = IntPtr.Zero;
+            }
+
+            base.OnFormClosing(e);
+        }
+
+        private IntPtr SetHook(LowLevelKeyboardProc proc)
+        {
+            IntPtr moduleHandle = IntPtr.Zero;
+            try
+            {
+                var curProcess = System.Diagnostics.Process.GetCurrentProcess();
+                var curModule = curProcess.MainModule;
+                moduleHandle = GetModuleHandle(curModule.ModuleName);
+            }
+            catch
+            {
+                // fallback: NULL module handle (funciona na maioria dos cenários para LL hook)
+                moduleHandle = IntPtr.Zero;
+            }
+
+            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, moduleHandle, 0);
+        }
+
+        private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            try
+            {
+                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+                {
+                    int vkCode = Marshal.ReadInt32(lParam);
+
+                    // Detecta Ctrl + Alt + Q (modifique as checagens conforme desejar)
+                    bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                    bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                    // bool shiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
+                    if (vkCode == VK_Q && ctrlDown && altDown)
+                    {
+                        // Gatilho: cancela o shader e encerra a aplicação
+                        try
+                        {
+                            _cts?.Cancel();
+                        }
+                        catch { }
+
+                        // Remover hook antes de sair
+                        if (_hookID != IntPtr.Zero)
+                        {
+                            UnhookWindowsHookEx(_hookID);
+                            _hookID = IntPtr.Zero;
+                        }
+
+                        // Solicita fechamento da UI thread de forma segura
+                        try
+                        {
+                            if (this.IsHandleCreated)
+                                this.BeginInvoke((Action)(() => Application.Exit()));
+                            else
+                                Environment.Exit(0);
+                        }
+                        catch
+                        {
+                            Environment.Exit(0);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // não propagar exceções do hook
+            }
+
+            return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
     }
 }
