@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -22,15 +23,22 @@ namespace noisy
 
         public static void Shader1_2()
         {
-            int x = GetSystemMetrics(SM_CXSCREEN);
-            int y = GetSystemMetrics(SM_CYSCREEN);
-            int size = x * y;
-            int bytes = size * 3;
+            int screenW = GetSystemMetrics(SM_CXSCREEN);
+            int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // Qualidade vs velocidade: processa apenas 1 em 'step' pixels
-            const int step = 4; // aumentar para menor qualidade e mais velocidade
+            // Aggressive downscale for speed. Bigger = faster, lower quality.
+            const int scale = 1; // try 4/6/8. 6 gives large speedup.
+            int w = Math.Max(1, screenW / scale);
+            int h = Math.Max(1, screenH / scale);
 
-            Random rand = new Random();
+            int sizeSmall = w * h;
+            int bytesSmall = sizeSmall * 3;
+
+            // Parallel options
+            var pOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
+
+            // Thread-local random for safe parallel randoms
+            var threadRand = new ThreadLocal<Random>(() => new Random(unchecked(Environment.TickCount * 31 + Thread.CurrentThread.ManagedThreadId)));
 
             IntPtr hdc = IntPtr.Zero;
             IntPtr mdc = IntPtr.Zero;
@@ -38,8 +46,8 @@ namespace noisy
             IntPtr oldObject = IntPtr.Zero;
             IntPtr ppvBits = IntPtr.Zero;
 
-            // Reutiliza buffer para evitar alocações por frame
-            byte[] rgbArray = new byte[bytes];
+            // Reuse buffer
+            byte[] rgbArray = new byte[bytesSmall];
 
             try
             {
@@ -49,16 +57,17 @@ namespace noisy
                 mdc = CreateCompatibleDC(hdc);
                 if (mdc == IntPtr.Zero) return;
 
+                // Prepare DIB at lower resolution (3 bytes per pixel BGR)
                 BITMAPINFO bmi = new BITMAPINFO
                 {
                     bmiHeader = new BITMAPINFOHEADER
                     {
                         biSize = (uint)Marshal.SizeOf(typeof(BITMAPINFOHEADER)),
-                        biWidth = x,
-                        biHeight = -y, // top-down
+                        biWidth = w,
+                        biHeight = -h, // top-down
                         biPlanes = 1,
                         biBitCount = 24,
-                        biCompression = 0
+                        biCompression = 0 //RGB
                     },
                     bmiColors = new RGBQUAD[1]
                 };
@@ -68,36 +77,46 @@ namespace noisy
 
                 oldObject = SelectObject(mdc, bitmap);
 
-                // Loop principal (infinito) - leve e rápido
+                // Use fast nearest-neighbor scaling when stretching
+                SetStretchBltMode(hdc, StretchBltMode.DELETESCANS);
+
+                // Main loop: capture small, noisy in parallel, stretch to full screen
                 while (true)
                 {
-                    // Captura tela para o DIB
-                    BitBlt(mdc, 0, 0, x, y, hdc, 0, 0, SRCCOPY);
+                    // Capture scaled-down screen into the small DIB by stretching the desktop into mdc
+                    // StretchBlt from hdc (screen) to mdc (small DIB)
+                    StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
 
-                    // Copia para o buffer gerenciado (reutilizado)
-                    Marshal.Copy(ppvBits, rgbArray, 0, bytes);
+                    // Copy small DIB into managed array
+                    Marshal.Copy(ppvBits, rgbArray, 0, bytesSmall);
 
-                    // Modifica apenas 1 em 'step' pixels (perda de qualidade intencional)
-                    for (int i = 8; i < size; i += step)
+                    // Parallel noise modification — process by rows to improve locality
+                    Parallel.For(0, h, pOptions, y =>
                     {
-                        int idx = i * 3;
-                        // pequenas variações nos canais BGR
-                        rgbArray[idx + 2] = (byte)(rgbArray[idx + 2] + rand.Next(2));
-                        rgbArray[idx + 1] = (byte)(rgbArray[idx + 1] + rand.Next(5));
-                        rgbArray[idx + 0] = (byte)(rgbArray[idx + 0] + rand.Next(6));
-                    }
+                        var rnd = threadRand.Value;
+                        int rowStart = y * w * 3;
+                        // Very low-quality: modify every pixel but minimal math to be fast
+                        for (int xPos = 0; xPos < w; xPos++)
+                        {
+                            int idx = rowStart + xPos * 3;
+                            // quick random-ish changes; clamp naturally by byte overflow (wrap is acceptable)
+                            rgbArray[idx + 0] += (byte)rnd.Next(-3, 5);
+                            rgbArray[idx + 1] += (byte)rnd.Next(-4, 4);
+                            rgbArray[idx + 2] += (byte)rnd.Next(-5, 3);
+                        }
+                    });
 
-                    // Volta para o DIB e pinta a tela
-                    Marshal.Copy(rgbArray, 0, ppvBits, bytes);
-                    BitBlt(hdc, 1, 1, x, y, mdc, 0, 0, SRCCOPY);
+                    // Copy back to the small DIB
+                    Marshal.Copy(rgbArray, 0, ppvBits, bytesSmall);
 
-                    // Pequena pausa para ceder CPU (mantém alto frame-rate sem travar completamente)
-                    //System.Threading.Thread.Sleep(1);
+                    // Stretch the small DIB to full screen quickly
+                    StretchBlt(hdc, 4, 4, screenW-10, screenH-20, mdc, 0, 0, w, h, SRCCOPY);
+
+                    // No sleep: real-time as fast as possible. This will use a lot of CPU/GPU.
                 }
             }
             finally
             {
-                // Restaura e libera recursos com segurança
                 if (mdc != IntPtr.Zero && oldObject != IntPtr.Zero)
                     SelectObject(mdc, oldObject);
 
@@ -109,13 +128,15 @@ namespace noisy
 
                 if (hdc != IntPtr.Zero)
                     ReleaseDC(IntPtr.Zero, hdc);
+
+                threadRand.Dispose();
             }
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            // Executa o shader em segundo plano para não bloquear a UI
-            Task.Run(() => Shader1_2());
+            // Start the shader on a dedicated background thread (long-running) to avoid threadpool starvation
+            Task.Factory.StartNew(() => Shader1_2(), TaskCreationOptions.LongRunning);
         }
     }
 }
