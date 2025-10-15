@@ -178,7 +178,7 @@ namespace noisy
                     // mas próximos aos offsets/margens originais
                     StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
-                    // Sem sleep: tempo-real o mais rápido possível
+                    Thread.Sleep(1);
                 }
             }
             finally
