@@ -65,7 +65,7 @@ namespace noisy
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
             // scale aleatório pequeno (1 ou 2). O código original usava 1 por padrão.
-            int scale = 1
+            int scale = 1;
             // "Tamanho do resultado final"
             //int scale = 1;
 
