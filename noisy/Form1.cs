@@ -64,11 +64,11 @@ namespace noisy
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // Aumentado para 4 para um processamento mais rápido
-            int scale = 4;
+            // "Tamanho do resultado final"
+            //int scale = 1;
 
-            int w = Math.Max(1, screenW / scale);
-            int h = Math.Max(1, screenH / scale);
+            int w = Math.Max(1, screenW);
+            int h = Math.Max(1, screenH);
 
             int sizeSmall = w * h;
             int bytesSmall = sizeSmall * 3;
