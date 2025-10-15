@@ -88,7 +88,7 @@ namespace noisy
             int destW = Math.Max(1, screenW - shrinkW - destX);
             int destH = Math.Max(1, screenH - shrinkH - destY);
 
-            // Amplitudes de ruído por canal próximas aos valores originais:
+            // Amplitudes de ruído por canal próximas/ aos valores originais:
             // original: B: rnd.Next(-3,5)  G: rnd.Next(-4,4)  R: rnd.Next(-5,3)
             // aqui escolhemos pequenas variações por execução, mantendo a mesma ordem de magnitude
             
@@ -144,14 +144,15 @@ namespace noisy
                 // Use fast nearest-neighbor scaling when stretching
                 SetStretchBltMode(hdc, StretchBltMode.DELETESCANS);
 
-                // Main loop: capture small, noisy in parallel, stretch to full screen
+                // Initial capture once to cache screen into memory (avoid recapturing each frame)
+                StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
+
+                // Main loop: reuse cached image, add noise, then stretch to screen
                 while (true)
                 {
                     if (token.IsCancellationRequested) break;
 
-                    // Capture scaled-down screen into the small DIB by stretching the desktop into mdc
-                    // StretchBlt from hdc (screen) to mdc (small DIB)
-                    StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
+                    // Using cached image in memory (no screen capture this iteration)
 
                     // Otimização: Acessa a memória do DIB diretamente com ponteiros
                     byte* pBits = (byte*)ppvBits.ToPointer();
