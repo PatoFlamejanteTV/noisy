@@ -91,14 +91,15 @@ namespace noisy
             // Amplitudes de ruído por canal próximas aos valores originais:
             // original: B: rnd.Next(-3,5)  G: rnd.Next(-4,4)  R: rnd.Next(-5,3)
             // aqui escolhemos pequenas variações por execução, mantendo a mesma ordem de magnitude
-            int bRangeLow = -startRnd.Next(1, 4);   // -1 .. -3
+            
+            /*int bRangeLow = -startRnd.Next(1, 4);   // -1 .. -3
             int bRangeHigh = startRnd.Next(3, 6);   // 3  .. 5
 
             int gRangeLow = -startRnd.Next(2, 5);   // -2 .. -4
             int gRangeHigh = startRnd.Next(2, 4);   // 2  .. 3
 
             int rRangeLow = -startRnd.Next(3, 6);   // -3 .. -5
-            int rRangeHigh = startRnd.Next(1, 4);   // 1  .. 3
+            int rRangeHigh = startRnd.Next(1, 4);   // 1  .. 3*/
 
             // Parallel options
             var pOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
@@ -164,9 +165,9 @@ namespace noisy
                         {
                             byte* pPixel = pRow + (xPos * 3);
                             // Aplicar ruído com amplitudes escolhidas no início
-                            pPixel[0] = (byte)(pPixel[0] + rnd.Next(bRangeLow, bRangeHigh)); // B
-                            pPixel[1] = (byte)(pPixel[1] + rnd.Next(gRangeLow, gRangeHigh)); // G
-                            pPixel[2] = (byte)(pPixel[2] + rnd.Next(rRangeLow, rRangeHigh)); // R
+                            pPixel[0] = (byte)(pPixel[0] + rnd.Next(-3, 5)); // B
+                            pPixel[1] = (byte)(pPixel[1] + rnd.Next(-4, 4)); // G
+                            pPixel[2] = (byte)(pPixel[2] + rnd.Next(-5, 3)); // R
                         }
                     });
 
@@ -174,7 +175,7 @@ namespace noisy
                     // mas próximos aos offsets/margens originais
                     StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
-                    Thread.Sleep(1);
+                    //Thread.Sleep(1);
                 }
             }
             finally
