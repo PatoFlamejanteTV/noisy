@@ -55,7 +55,7 @@ namespace noisy
             InitializeComponent();
         }
 
-        public static void Shader1_2(CancellationToken token)
+        public static unsafe void Shader1_2(CancellationToken token)
         {
             // Escolhas aleatórias por execução (ajustadas para serem pequenas e realistas
             // em relação aos valores hardcoded originais)
@@ -110,9 +110,6 @@ namespace noisy
             IntPtr oldObject = IntPtr.Zero;
             IntPtr ppvBits = IntPtr.Zero;
 
-            // Reuse buffer
-            byte[] rgbArray = new byte[bytesSmall];
-
             try
             {
                 hdc = GetDC(IntPtr.Zero);
@@ -153,26 +150,23 @@ namespace noisy
                     // StretchBlt from hdc (screen) to mdc (small DIB)
                     StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
 
-                    // Copy small DIB into managed array
-                    Marshal.Copy(ppvBits, rgbArray, 0, bytesSmall);
+                    // Otimização: Acessa a memória do DIB diretamente com ponteiros
+                    byte* pBits = (byte*)ppvBits.ToPointer();
 
-                    // Parallel noise modification — process por linhas para melhor localidade
+                    // Modificação de ruído paralela — processa por linhas para melhor localidade
                     Parallel.For(0, h, pOptions, y =>
                     {
                         var rnd = threadRand.Value;
-                        int rowStart = y * w * 3;
+                        byte* pRow = pBits + (y * w * 3);
                         for (int xPos = 0; xPos < w; xPos++)
                         {
-                            int idx = rowStart + xPos * 3;
-                            // aplicar ruído com amplitudes escolhidas no início
-                            rgbArray[idx + 0] = (byte)(rgbArray[idx + 0] + rnd.Next(bRangeLow, bRangeHigh)); // B
-                            rgbArray[idx + 1] = (byte)(rgbArray[idx + 1] + rnd.Next(gRangeLow, gRangeHigh)); // G
-                            rgbArray[idx + 2] = (byte)(rgbArray[idx + 2] + rnd.Next(rRangeLow, rRangeHigh)); // R
+                            byte* pPixel = pRow + (xPos * 3);
+                            // Aplicar ruído com amplitudes escolhidas no início
+                            pPixel[0] = (byte)(pPixel[0] + rnd.Next(bRangeLow, bRangeHigh)); // B
+                            pPixel[1] = (byte)(pPixel[1] + rnd.Next(gRangeLow, gRangeHigh)); // G
+                            pPixel[2] = (byte)(pPixel[2] + rnd.Next(rRangeLow, rRangeHigh)); // R
                         }
                     });
-
-                    // Copy back to the small DIB
-                    Marshal.Copy(rgbArray, 0, ppvBits, bytesSmall);
 
                     // Stretch the small DIB to full screen rapidamente usando valores aleatórios por execução,
                     // mas próximos aos offsets/margens originais
