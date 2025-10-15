@@ -64,8 +64,8 @@ namespace noisy
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // scale aleatório pequeno (1 ou 2). O código original usava 1 por padrão.
-            int scale = startRnd.Next(1, 3); // 1..2
+            // Aumentado para 4 para um processamento mais rápido
+            int scale = 4;
 
             int w = Math.Max(1, screenW / scale);
             int h = Math.Max(1, screenH / scale);
