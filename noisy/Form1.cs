@@ -64,11 +64,10 @@ namespace noisy
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            // Aumentado para 8 para desempenho máximo.
-            int scale = 8;
+            int scale = 1;
 
-            int w = Math.Max(1, screenW / scale);
-            int h = Math.Max(1, screenH / scale);
+            int w = Math.Max(1, screenW);
+            int h = Math.Max(1, screenH);
 
             int sizeSmall = w * h;
             int bytesSmall = sizeSmall * 3;
@@ -172,7 +171,7 @@ namespace noisy
                     // mas próximos aos offsets/margens originais
                     StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
-                    // Sem sleep: tempo-real o mais rápido possível
+                    Thread.Sleep(1);
                 }
             }
             finally
