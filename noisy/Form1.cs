@@ -64,44 +64,55 @@ namespace noisy
             int screenW = GetSystemMetrics(SM_CXSCREEN);
             int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-            int scale = 1;
-
-            int w = Math.Max(1, screenW);
-            int h = Math.Max(1, screenH);
-
-            int sizeSmall = w * h;
-            int bytesSmall = sizeSmall * 3;
+            // Optimization 1: Downscale the processing buffer significantly (factor of 8)
+            // This reduces the number of pixels to process by 64x.
+            int div = 8;
+            int w = Math.Max(1, screenW / div);
+            int h = Math.Max(1, screenH / div);
 
             // Escolhe offsets/margens aleatórios pequenos para o StretchBlt de destino
-            // Valores próximos ao original (ex: deslocamentos de poucos pixels e pequenas
-            // reduções de largura/altura como -10 / -20).
             int destX = startRnd.Next(0, Math.Min(6, screenW / 10)); // 0..5
             int destY = startRnd.Next(0, Math.Min(6, screenH / 10)); // 0..5
 
-            // Pequenas reduções fixas na largura/altura para simular os -10 / -20 originais
-            int shrinkW = startRnd.Next(4, 12);  // 4..11 (aprox equivalente ao -10 original)
-            int shrinkH = startRnd.Next(10, 26); // 10..25 (aprox equivalente ao -20 original)
+            // Pequenas reduções fixas na largura/altura
+            int shrinkW = startRnd.Next(4, 12);
+            int shrinkH = startRnd.Next(10, 26);
 
             int destW = Math.Max(1, screenW - shrinkW - destX);
             int destH = Math.Max(1, screenH - shrinkH - destY);
 
-            // Amplitudes de ruído por canal próximas aos valores originais:
-            // original: B: rnd.Next(-3,5)  G: rnd.Next(-4,4)  R: rnd.Next(-5,3)
-            // aqui escolhemos pequenas variações por execução, mantendo a mesma ordem de magnitude
-            int bRangeLow = -startRnd.Next(1, 4);   // -1 .. -3
-            int bRangeHigh = startRnd.Next(3, 6);   // 3  .. 5
+            // Amplitudes de ruído por canal
+            int bRangeLow = -startRnd.Next(1, 4);
+            int bRangeHigh = startRnd.Next(3, 6);
 
-            int gRangeLow = -startRnd.Next(2, 5);   // -2 .. -4
-            int gRangeHigh = startRnd.Next(2, 4);   // 2  .. 3
+            int gRangeLow = -startRnd.Next(2, 5);
+            int gRangeHigh = startRnd.Next(2, 4);
 
-            int rRangeLow = -startRnd.Next(3, 6);   // -3 .. -5
-            int rRangeHigh = startRnd.Next(1, 4);   // 1  .. 3
+            int rRangeLow = -startRnd.Next(3, 6);
+            int rRangeHigh = startRnd.Next(1, 4);
+
+            // Optimization 2: Pre-compute noise buffer
+            // We create a large buffer of random noise deltas.
+            // Using power of 2 dimensions allows for fast bitwise masking instead of modulo.
+            int noiseW = 2048;
+            int noiseH = 2048;
+            int noiseMaskW = noiseW - 1;
+            int noiseMaskH = noiseH - 1;
+            byte[] noiseData = new byte[noiseW * noiseH * 3];
+
+            for (int i = 0; i < noiseData.Length; i += 3)
+            {
+                noiseData[i] = (byte)startRnd.Next(bRangeLow, bRangeHigh);
+                noiseData[i + 1] = (byte)startRnd.Next(gRangeLow, gRangeHigh);
+                noiseData[i + 2] = (byte)startRnd.Next(rRangeLow, rRangeHigh);
+            }
+
+            // Pin the noise array to get a pointer
+            GCHandle noiseHandle = GCHandle.Alloc(noiseData, GCHandleType.Pinned);
+            byte* pNoiseBase = (byte*)noiseHandle.AddrOfPinnedObject();
 
             // Parallel options
             var pOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
-
-            // Thread-local random para segurança em paralelo
-            var threadRand = new ThreadLocal<Random>(() => new Random(unchecked(Environment.TickCount * 31 + Thread.CurrentThread.ManagedThreadId)));
 
             IntPtr hdc = IntPtr.Zero;
             IntPtr mdc = IntPtr.Zero;
@@ -140,42 +151,58 @@ namespace noisy
                 // Use fast nearest-neighbor scaling when stretching
                 SetStretchBltMode(hdc, StretchBltMode.DELETESCANS);
 
-                // Main loop: capture small, noisy in parallel, stretch to full screen
+                int frameCount = 0;
+
+                // Main loop: capture small, add pre-computed noise, stretch to full screen
                 while (true)
                 {
                     if (token.IsCancellationRequested) break;
 
                     // Capture scaled-down screen into the small DIB by stretching the desktop into mdc
-                    // StretchBlt from hdc (screen) to mdc (small DIB)
                     StretchBlt(mdc, 0, 0, w, h, hdc, 0, 0, screenW, screenH, SRCCOPY);
 
-                    // Otimização: Acessa a memória do DIB diretamente com ponteiros
                     byte* pBits = (byte*)ppvBits.ToPointer();
 
-                    // Modificação de ruído paralela — processa por linhas para melhor localidade
+                    frameCount++;
+
+                    // Modificação de ruído paralela usando ponteiros e ruído pré-calculado
                     Parallel.For(0, h, pOptions, y =>
                     {
-                        var rnd = threadRand.Value;
                         byte* pRow = pBits + (y * w * 3);
+
+                        // Calculate offset in noise texture (scroll vertically)
+                        int ny = (y + frameCount) & noiseMaskH;
+                        byte* pNoiseRow = pNoiseBase + (ny * noiseW * 3);
+
+                        // Calculate horizontal noise offset (scroll horizontally)
+                        int nxStart = (frameCount * 3) & noiseMaskW;
+
                         for (int xPos = 0; xPos < w; xPos++)
                         {
                             byte* pPixel = pRow + (xPos * 3);
-                            // Aplicar ruído com amplitudes escolhidas no início
-                            pPixel[0] = (byte)(pPixel[0] + rnd.Next(bRangeLow, bRangeHigh)); // B
-                            pPixel[1] = (byte)(pPixel[1] + rnd.Next(gRangeLow, gRangeHigh)); // G
-                            pPixel[2] = (byte)(pPixel[2] + rnd.Next(rRangeLow, rRangeHigh)); // R
+
+                            int nx = (nxStart + xPos) & noiseMaskW;
+                            byte* pNoise = pNoiseRow + (nx * 3);
+
+                            // Apply noise (using byte overflow for subtraction simulation)
+                            pPixel[0] += pNoise[0]; // B
+                            pPixel[1] += pNoise[1]; // G
+                            pPixel[2] += pNoise[2]; // R
                         }
                     });
 
-                    // Stretch the small DIB to full screen rapidamente usando valores aleatórios por execução,
-                    // mas próximos aos offsets/margens originais
+                    // Stretch the small DIB to full screen
                     StretchBlt(hdc, destX, destY, destW, destH, mdc, 0, 0, w, h, SRCCOPY);
 
-                    Thread.Sleep(1);
+                    // Removed Sleep for maximum speed
+                    // Thread.Sleep(1);
                 }
             }
             finally
             {
+                if (noiseHandle.IsAllocated)
+                    noiseHandle.Free();
+
                 if (mdc != IntPtr.Zero && oldObject != IntPtr.Zero)
                     SelectObject(mdc, oldObject);
 
@@ -187,8 +214,6 @@ namespace noisy
 
                 if (hdc != IntPtr.Zero)
                     ReleaseDC(IntPtr.Zero, hdc);
-
-                threadRand.Dispose();
             }
         }
 
